@@ -1,0 +1,51 @@
+name: Enable GitHub Pages
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/enable-pages.yml
+
+permissions:
+  contents: read
+  pages: write
+
+jobs:
+  enable:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish from main /docs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          api="https://api.github.com/repos/${GITHUB_REPOSITORY}/pages"
+          auth=(-H "Authorization: Bearer ${GH_TOKEN}" -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28")
+          body='{"build_type":"legacy","source":{"branch":"main","path":"/docs"}}'
+
+          code=$(curl -sS -o /tmp/pages.json -w "%{http_code}" "${auth[@]}" "$api")
+          echo "GET pages -> ${code}"
+          cat /tmp/pages.json
+          echo
+
+          if [ "$code" = "404" ]; then
+            code=$(curl -sS -o /tmp/pages.json -w "%{http_code}" -X POST "${auth[@]}" "$api" -d "$body")
+            echo "POST pages -> ${code}"
+          else
+            code=$(curl -sS -o /tmp/pages.json -w "%{http_code}" -X PUT "${auth[@]}" "$api" -d "$body")
+            echo "PUT pages -> ${code}"
+          fi
+          cat /tmp/pages.json
+          echo
+          python3 - "$code" <<'PY'
+          import json, sys
+          code = sys.argv[1]
+          data = json.load(open("/tmp/pages.json"))
+          source = data.get("source") or {}
+          if code not in {"200", "201"}:
+              raise SystemExit(f"pages API failed: {code} {data.get('message')}")
+          if source.get("branch") != "main" or source.get("path") != "/docs":
+              raise SystemExit(f"unexpected source: {source}")
+          print(f"enabled {data.get('html_url')} source={source}")
+          PY
